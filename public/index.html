@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Multiplayer Card Game</title>
+  <style>
+    /* Basic styles */
+    #gameArea {
+      text-align: center;
+      margin-top: 50px;
+    }
+    #playerHand {
+      display: flex;
+      justify-content: center;
+    }
+    .card {
+      margin: 10px;
+      padding: 20px;
+      border: 1px solid #000;
+      cursor: pointer;
+    }
+    #scoreBoard {
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div id="gameArea">
+    <h1>Continental</h1>
+    <div id="playerHand"></div>
+    <button id="dealBtn">Deal Cards</button>
+    <div id="status"></div>
+    <div id="scoreBoard"></div> <!-- New score board section -->
+  </div>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
