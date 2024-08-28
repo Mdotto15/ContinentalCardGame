@@ -3,37 +3,128 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Multiplayer Card Game</title>
+  <title>Card Game</title>
   <style>
-    /* Basic styles */
-    #gameArea {
+    body {
+      background-image: url('images/tabletop');
+      background-size: cover; /* Ensure the image covers the entire background */
+      background-position: center; /* Center the image */
+      background-repeat: no-repeat; /* Prevent the image from repeating */
+      /*color: white; /* Set text color to white for better contrast */
+      font-family: Arial, sans-serif; /* Set a clean, readable font */
+    }
+
+    #hand, #drawPile, #discardPile {
+      margin: 10px 0;
+    }
+    
+    .button {
+      margin: 5px;
+    }
+
+    #actionButtons {
+      margin: 10px 0;
+    }
+
+    h1 {
       text-align: center;
-      margin-top: 50px;
-    }
-    #playerHand {
-      display: flex;
-      justify-content: center;
-    }
-    .card {
-      margin: 10px;
-      padding: 20px;
-      border: 1px solid #000;
-      cursor: pointer;
-    }
-    #scoreBoard {
-      margin-top: 20px;
     }
   </style>
 </head>
 <body>
-  <div id="gameArea">
-    <h1>Continental</h1>
-    <div id="playerHand"></div>
-    <button id="dealBtn">Deal Cards</button>
-    <div id="status"></div>
-    <div id="scoreBoard"></div> <!-- New score board section -->
+  <h1>Continental</h1>
+  
+  <div id="gameInfo">
+    <p>Current Player's Turn: <span id="currentPlayer"></span></p>
+    <p>Round: <span id="round"></span></p>
   </div>
+
+  <div id="hand"></div>
+  
+  <div id="actionButtons">
+    <button id="drawButton" class="button">Draw Card</button>
+    <button id="takeButton" class="button">Take Card</button>
+    <button id="discardButton" class="button">Discard Card</button>
+    <button id="openButton" class="button">Open</button>
+    <button id="closeButton" class="button">Close</button>
+  </div>
+  
+  <div id="drawPile">Draw Pile: </div>
+  <div id="discardPile">Discard Pile: </div>
+
   <script src="/socket.io/socket.io.js"></script>
-  <script src="script.js"></script>
+  <script>
+    const socket = io();
+
+    socket.on('updateGameState', (gameState) => {
+      const hand = gameState.hands[socket.id];
+      document.getElementById('hand').innerHTML = hand.map(card => `${card.rank} of ${card.suit}`).join(', ');
+
+      document.getElementById('drawPile').innerText = `Draw Pile: ${gameState.drawPile.length} cards`;
+      document.getElementById('discardPile').innerText = `Discard Pile: ${gameState.discardPile.map(card => `${card.rank} of ${card.suit}`).join(', ')}`;
+
+      document.getElementById('round').innerText = gameState.round;
+
+      const currentPlayer = gameState.currentPlayer;
+      document.getElementById('currentPlayer').innerText = currentPlayer ? `Player ${currentPlayer}` : 'None';
+      
+      // Check if the current player is the logged-in player
+      const isCurrentPlayer = socket.id === currentPlayer;
+      document.getElementById('drawButton').disabled = !isCurrentPlayer;
+      document.getElementById('takeButton').disabled = !isCurrentPlayer;
+      document.getElementById('discardButton').disabled = !isCurrentPlayer;
+      document.getElementById('openButton').disabled = !isCurrentPlayer || gameState.playersOpened.includes(socket.id);
+      document.getElementById('closeButton').disabled = !isCurrentPlayer;
+    });
+
+    socket.on('playerTurn', ({ playerId }) => {
+      const currentPlayerText = playerId ? `Player ${playerId}` : 'None';
+      document.getElementById('currentPlayer').innerText = currentPlayerText;
+    });
+
+    document.getElementById('drawButton').addEventListener('click', () => {
+      socket.emit('drawCard');
+    });
+
+    document.getElementById('takeButton').addEventListener('click', () => {
+      socket.emit('takeCard');
+    });
+
+    document.getElementById('discardButton').addEventListener('click', () => {
+      const selectedCard = prompt('Enter the rank and suit of the card to discard (e.g., "5 of hearts")');
+      const [rank, , suit] = selectedCard.split(' ');
+      socket.emit('discardCard', { rank, suit });
+    });
+
+    document.getElementById('openButton').addEventListener('click', () => {
+      const selectedCard = prompt('Enter the rank and suit of the card to open (e.g., "5 of hearts")');
+      const [rank, , suit] = selectedCard.split(' ');
+      socket.emit('selectCardForOpening', { rank, suit });
+    });
+
+    document.getElementById('closeButton').addEventListener('click', () => {
+      socket.emit('close');
+    });
+
+    socket.on('openValid', (playerId) => {
+      alert(`Player ${playerId} successfully opened!`);
+    });
+
+    socket.on('invalidOpening', () => {
+      alert('Invalid opening. Please try again.');
+    });
+
+    socket.on('invalidClose', () => {
+      alert('Invalid close. Please ensure your hand meets the requirements.');
+    });
+
+    socket.on('gameOver', (scores) => {
+      alert(`Game Over! Final Scores: ${JSON.stringify(scores)}`);
+    });
+
+    socket.on('notYourTurn', () => {
+      alert('It\'s not your turn.');
+    });
+  </script>
 </body>
 </html>
