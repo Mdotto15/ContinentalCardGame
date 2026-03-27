@@ -9,6 +9,7 @@ const roomCodeInput = document.getElementById('roomCodeInput');
 const createRoomBtn = document.getElementById('createRoomBtn');
 const joinRoomBtn = document.getElementById('joinRoomBtn');
 const startGameBtn = document.getElementById('startGameBtn');
+const lobbyPlayersList = document.getElementById('lobbyPlayersList');
 
 const landingStatus = document.getElementById('landingStatus');
 const statusEl = document.getElementById('status');
@@ -138,13 +139,32 @@ function selectedCards() {
 
 function renderLayout() {
   const inRoom = Boolean(joinedRoomCode);
+  const showLobbyBar = inRoom && (!state || state.phase === 'lobby');
+  const showGamePanels = inRoom && state && state.phase !== 'lobby';
   landingPanel.classList.toggle('hidden', inRoom);
-  roomPanel.classList.toggle('hidden', !inRoom);
-  gamePanels.classList.toggle('hidden', !inRoom);
+  roomPanel.classList.toggle('hidden', !showLobbyBar);
+  gamePanels.classList.toggle('hidden', !showGamePanels);
 
   if (joinedRoomCode) {
     roomCodeLabel.textContent = joinedRoomCode;
   }
+}
+
+function renderLobbyPlayers() {
+  if (!lobbyPlayersList) return;
+  lobbyPlayersList.innerHTML = '';
+
+  if (!state || !state.players || state.players.length === 0) {
+    lobbyPlayersList.innerHTML = '<li>Waiting for players...</li>';
+    return;
+  }
+
+  state.players.forEach((p, idx) => {
+    const li = document.createElement('li');
+    const hostTag = idx === 0 ? ' (host)' : '';
+    li.textContent = `${idx + 1}. ${p.name}${hostTag}`;
+    lobbyPlayersList.appendChild(li);
+  });
 }
 
 function renderPlayers() {
@@ -384,7 +404,14 @@ function renderPiles() {
   }
 
   const discard = state.discardTop ? longCardLabel(state.discardTop) : 'none';
-  pileInfoEl.textContent = `Click stock (face-down) or discard (face-up) pile to draw. Discard top: ${discard}.`;
+  let info = `Click stock (face-down) or discard (face-up) pile to draw. Discard top: ${discard}.`;
+  if (state.discardClaimOpen) {
+    const claimers = state.discardClaimers && state.discardClaimers.length > 0
+      ? ` Claim requests: ${state.discardClaimers.join(', ')}.`
+      : ' Claim window open.';
+    info += claimers;
+  }
+  pileInfoEl.textContent = info;
   stockCountLabel.textContent = `Stock: ${state.stockCount}`;
   discardCountLabel.textContent = `Discard: ${state.discardCount}`;
 
@@ -411,11 +438,19 @@ function syncControls() {
   const stageDiscard = state && state.turnStage === 'discard';
   const inSummary = state && state.phase === 'roundSummary';
 
-  startGameBtn.disabled = !inLobby || !state || !state.isHost || state.players.length < 2;
+  const playerCount = state && state.players ? state.players.length : 0;
+  startGameBtn.textContent = `Start Game (${playerCount}/${state ? state.maxPlayers : 5})`;
+  startGameBtn.disabled = !inLobby || !state || !state.isHost || playerCount < 2;
   continueRoundBtn.disabled = !inSummary || !state || !state.isHost;
 
   stockPileBtn.disabled = !canActOnTurn() || !stageDraw || !state || state.stockCount < 1;
-  discardPileBtn.disabled = !canActOnTurn() || !stageDraw || !(state && state.discardTop);
+  const canDrawDiscard = canActOnTurn() && stageDraw && state && state.discardTop;
+  const canClaimDiscard = state
+    && state.phase === 'inRound'
+    && !isYourTurn()
+    && state.discardClaimOpen
+    && !state.discardClaimedByMe;
+  discardPileBtn.disabled = !(canDrawDiscard || canClaimDiscard);
 
   discardBtn.disabled = !canActOnTurn() || !stageDiscard || selectedCardIds.size !== 1;
   addPendingMeldBtn.disabled = !canActOnTurn() || !stageDiscard || selectedCardIds.size < 3;
@@ -431,6 +466,7 @@ function syncControls() {
 
 function render() {
   renderLayout();
+  renderLobbyPlayers();
   renderRoundInfo();
   renderPiles();
   renderPlayers();
@@ -477,7 +513,21 @@ stockPileBtn.addEventListener('click', () => {
 });
 
 discardPileBtn.addEventListener('click', () => {
-  socket.emit('drawDiscard');
+  if (!state) return;
+  const canDrawDiscard = canActOnTurn() && state.turnStage === 'draw';
+  if (canDrawDiscard) {
+    socket.emit('drawDiscard');
+    return;
+  }
+
+  const canClaimDiscard = state.phase === 'inRound'
+    && !isYourTurn()
+    && state.discardClaimOpen
+    && !state.discardClaimedByMe;
+  if (canClaimDiscard) {
+    socket.emit('claimDiscard');
+    statusEl.textContent = 'Discard claim registered. Precedence will follow turn order.';
+  }
 });
 
 discardBtn.addEventListener('click', () => {
@@ -540,11 +590,15 @@ socket.on('state', (nextState) => {
     statusEl.textContent = 'Game finished. Create a new room for a new match.';
   } else if (state.winnerOfHand) {
     const winner = state.players.find((p) => p.id === state.winnerOfHand);
-    if (winner) statusEl.textContent = `${winner.name} ended the hand.`;
+    if (winner) {
+      statusEl.textContent = `${winner.name} ended the hand.`;
+    }
   }
 });
 
 socket.on('gameError', (message) => {
   if (!joinedRoomCode) landingStatus.textContent = message;
-  else statusEl.textContent = message;
+  else {
+    statusEl.textContent = message;
+  }
 });

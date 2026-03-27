@@ -17,7 +17,7 @@ Browser-based multiplayer Continental-style Rummy built with Node.js, Express, a
   7. Three runs
 - Cards dealt by round: 7 (round 1), 8 (round 2), ... up to 13 (round 7).
 - Deck count scales with players (e.g. 5 players => 3 decks) with jokers.
-- Wild cards: jokers + red aces.
+- Wild cards: jokers only.
 - Turn system: draw first (stock/discard), then either open valid contract melds and/or discard exactly one card.
 - Opening validation against the current round contract.
 - Layoff onto existing table melds once a player has opened.
@@ -40,6 +40,28 @@ npm start
 ```
 
 Open `http://localhost:3000` in up to 5 browser tabs/windows.
+
+## Share Over Internet With ngrok
+
+If you want people outside your local network to join without deploying to a cloud host:
+
+1. Install ngrok and add your auth token:
+   ```bash
+   ngrok config add-authtoken <YOUR_TOKEN>
+   ```
+2. Run the game server:
+   ```bash
+   npm start
+   ```
+3. In a second terminal, tunnel port `3000`:
+   ```bash
+   ngrok http 3000
+   ```
+4. Share the generated `https://...ngrok-free.app` URL.
+
+Notes:
+- Keep both `npm start` and ngrok running while others are connected.
+- Free ngrok URLs change each time you restart ngrok.
 
 ## Room Flow
 

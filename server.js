@@ -48,6 +48,9 @@ function createRoomState(code) {
     turnIndex: 0,
     turnStage: 'draw',
     openedThisTurn: false,
+    discardClaimOpen: false,
+    discardClaimCardId: null,
+    discardClaimers: [],
     winnerOfHand: null,
     roundSummary: null,
   };
@@ -67,7 +70,7 @@ function generateRoomCode() {
 
 function isWild(card) {
   if (!card) return false;
-  return card.rank === 'JOKER' || (card.rank === 'A' && (card.suit === 'hearts' || card.suit === 'diamonds'));
+  return card.rank === 'JOKER';
 }
 
 function cardValue(card) {
@@ -162,6 +165,9 @@ function makePublicState(room, forPlayerId) {
     yourHand: sortHand(room.hands[forPlayerId] || []),
     turnPlayerId: currentPlayerId(room),
     turnStage: room.turnStage,
+    discardClaimOpen: room.discardClaimOpen,
+    discardClaimedByMe: room.discardClaimers.includes(forPlayerId),
+    discardClaimers: room.discardClaimers.map((id) => room.playerNames[id] || 'Player'),
     dealerId: room.players[room.dealerIndex] || null,
     stockCount: room.stock.length,
     discardTop: room.discard[room.discard.length - 1] || null,
@@ -188,6 +194,9 @@ function nextTurn(room) {
   room.turnIndex = (room.turnIndex + 1) % room.players.length;
   room.turnStage = 'draw';
   room.openedThisTurn = false;
+  room.discardClaimOpen = false;
+  room.discardClaimCardId = null;
+  room.discardClaimers = [];
 }
 
 function ensureStock(room) {
@@ -224,25 +233,27 @@ function canMakeStraightWithValues(values, wilds) {
   return needed <= wilds;
 }
 
-function isRun(cards) {
-  if (cards.length < 4) return false;
-  if (cards.length > 13) return false;
+function buildRunArrangement(cards) {
+  if (cards.length < 4) return null;
+  if (cards.length > 13) return null;
 
   const naturals = cards.filter((c) => !isWild(c));
-  const wilds = cards.length - naturals.length;
-  if (naturals.length === 0) return cards.length >= 4;
+  const wildCards = cards.filter((c) => isWild(c));
+  const wilds = wildCards.length;
+  if (naturals.length === 0) return cards.length >= 4 ? [...cards] : null;
 
   const suit = naturals[0].suit;
-  if (!naturals.every((c) => c.suit === suit)) return false;
-  if (naturals.length < wilds) return false;
+  if (!naturals.every((c) => c.suit === suit)) return null;
+  if (naturals.length < wilds) return null;
 
-  const naturalValues = naturals.map((c) => rankValue(c.rank));
-  const uniqueNaturals = new Set(naturalValues);
-  if (uniqueNaturals.size !== naturalValues.length) return false;
+  const naturalByValue = new Map();
+  for (const card of naturals) {
+    const value = rankValue(card.rank);
+    if (naturalByValue.has(value)) return null;
+    naturalByValue.set(value, card);
+  }
 
   const runLength = cards.length;
-
-  // Check every possible cyclic run start (1..13), so K-A-2-3 is valid.
   for (let start = 1; start <= 13; start += 1) {
     const sequence = [];
     for (let i = 0; i < runLength; i += 1) {
@@ -251,14 +262,12 @@ function isRun(cards) {
 
     const seqSet = new Set(sequence);
     let containsAllNaturals = true;
-    uniqueNaturals.forEach((v) => {
-      if (!seqSet.has(v)) containsAllNaturals = false;
+    naturalByValue.forEach((_card, value) => {
+      if (!seqSet.has(value)) containsAllNaturals = false;
     });
     if (!containsAllNaturals) continue;
 
-    // Missing positions are wildcard slots. Reject if any two wildcard slots
-    // are adjacent in the run order (e.g., 2, JOKER, JOKER, 5).
-    const missing = sequence.map((v) => !uniqueNaturals.has(v));
+    const missing = sequence.map((value) => !naturalByValue.has(value));
     let hasAdjacentWildSlots = false;
     for (let i = 0; i < missing.length - 1; i += 1) {
       if (missing[i] && missing[i + 1]) {
@@ -267,11 +276,28 @@ function isRun(cards) {
       }
     }
     if (hasAdjacentWildSlots) continue;
+    if (missing.filter(Boolean).length !== wilds) continue;
 
-    if (missing.filter(Boolean).length === wilds) return true;
+    // Build ordered run, placing jokers/wilds into open slots.
+    const arranged = [];
+    let wildIdx = 0;
+    for (let i = 0; i < sequence.length; i += 1) {
+      const value = sequence[i];
+      if (naturalByValue.has(value)) {
+        arranged.push(naturalByValue.get(value));
+      } else {
+        arranged.push(wildCards[wildIdx]);
+        wildIdx += 1;
+      }
+    }
+    return arranged;
   }
 
-  return false;
+  return null;
+}
+
+function isRun(cards) {
+  return Boolean(buildRunArrangement(cards));
 }
 
 function classifyMeld(cards) {
@@ -303,7 +329,7 @@ function validateOpenMelds(room, melds) {
 function addCardsToMeld(existing, newCards) {
   const merged = [...existing.cards, ...newCards];
   if (existing.type === 'set') return isSet(merged) ? merged : null;
-  if (existing.type === 'run') return isRun(merged) ? merged : null;
+  if (existing.type === 'run') return buildRunArrangement(merged);
   return null;
 }
 
@@ -355,6 +381,9 @@ function finishHand(room, winnerId, wentOutByOpening) {
   };
 
   room.phase = room.round >= CONTRACTS.length ? 'finished' : 'roundSummary';
+  room.discardClaimOpen = false;
+  room.discardClaimCardId = null;
+  room.discardClaimers = [];
 }
 
 function startRound(room) {
@@ -380,6 +409,9 @@ function startRound(room) {
   room.turnIndex = (room.dealerIndex + 1) % room.players.length;
   room.turnStage = 'draw';
   room.openedThisTurn = false;
+  room.discardClaimOpen = false;
+  room.discardClaimCardId = null;
+  room.discardClaimers = [];
 }
 
 function startGame(room) {
@@ -390,6 +422,33 @@ function startGame(room) {
     room.scores[playerId] = 0;
   }
   startRound(room);
+}
+
+function resolveDiscardClaimWinner(room) {
+  if (!room.discardClaimOpen || room.discardClaimers.length === 0 || !room.discardClaimCardId) return null;
+
+  const claimers = new Set(room.discardClaimers);
+  const total = room.players.length;
+  if (total < 2) return null;
+
+  // Precedence starts from the next player after current turn player.
+  for (let offset = 1; offset < total; offset += 1) {
+    const idx = (room.turnIndex + offset) % total;
+    const playerId = room.players[idx];
+    if (claimers.has(playerId)) return playerId;
+  }
+  return null;
+}
+
+function awardDiscardClaimIfAny(room) {
+  const winnerId = resolveDiscardClaimWinner(room);
+  if (!winnerId) return;
+
+  const targetIdx = room.discard.findIndex((c) => c.id === room.discardClaimCardId);
+  if (targetIdx === -1) return;
+
+  const [claimedCard] = room.discard.splice(targetIdx, 1);
+  room.hands[winnerId].push(claimedCard);
 }
 
 function cleanupRoomIfEmpty(roomCode) {
@@ -460,6 +519,9 @@ io.on('connection', (socket) => {
     room.hands[socket.id].push(room.stock.pop());
     room.turnStage = 'discard';
     room.openedThisTurn = false;
+    room.discardClaimOpen = Boolean(room.discard.length > 0);
+    room.discardClaimCardId = room.discardClaimOpen ? room.discard[room.discard.length - 1].id : null;
+    room.discardClaimers = [];
     emitState(room);
   });
 
@@ -473,7 +535,22 @@ io.on('connection', (socket) => {
     room.hands[socket.id].push(room.discard.pop());
     room.turnStage = 'discard';
     room.openedThisTurn = false;
+    room.discardClaimOpen = false;
+    room.discardClaimCardId = null;
+    room.discardClaimers = [];
     emitState(room);
+  });
+
+  socket.on('claimDiscard', () => {
+    const room = getRoomForSocket(socket.id);
+    if (!room || room.phase !== 'inRound') return;
+    if (!room.discardClaimOpen || !room.discardClaimCardId) return;
+    if (socket.id === currentPlayerId(room)) return;
+
+    if (!room.discardClaimers.includes(socket.id)) {
+      room.discardClaimers.push(socket.id);
+      emitState(room);
+    }
   });
 
   socket.on('open', ({ meldCardIds }) => {
@@ -504,11 +581,12 @@ io.on('connection', (socket) => {
     }
 
     melds.forEach((cards) => {
+      const meldType = classifyMeld(cards);
       room.tableMelds.push({
         id: `m${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         ownerId: socket.id,
-        type: classifyMeld(cards),
-        cards,
+        type: meldType,
+        cards: meldType === 'run' ? buildRunArrangement(cards) : cards,
       });
     });
 
@@ -562,7 +640,13 @@ io.on('connection', (socket) => {
       return sendError(socket, 'Selected discard card is not in your hand.');
     }
 
+    // Resolve the previous discard claim window before this new discard lands.
+    awardDiscardClaimIfAny(room);
+
     room.discard.push(extracted[0]);
+    room.discardClaimOpen = false;
+    room.discardClaimCardId = null;
+    room.discardClaimers = [];
     if (room.hands[socket.id].length === 0) {
       finishHand(room, socket.id, room.openedThisTurn);
       emitState(room);
@@ -601,6 +685,7 @@ io.on('connection', (socket) => {
     delete room.scores[socket.id];
     delete room.hands[socket.id];
     delete room.openedThisRound[socket.id];
+    room.discardClaimers = room.discardClaimers.filter((id) => id !== socket.id);
 
     if (room.players.length === 0) {
       rooms.delete(roomCode);
@@ -628,6 +713,9 @@ io.on('connection', (socket) => {
     if (room.phase === 'inRound' && wasCurrentPlayer) {
       room.turnStage = 'draw';
       room.openedThisTurn = false;
+      room.discardClaimOpen = false;
+      room.discardClaimCardId = null;
+      room.discardClaimers = [];
     }
 
     emitState(room);

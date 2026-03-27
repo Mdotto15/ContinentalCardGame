@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Continental Rummy (Room Codes)</title>
+  <title>Continental (Room Codes)</title>
   <style>
     :root {
       --ink: #f0f4f8;
@@ -42,6 +42,41 @@
       border: 1px solid rgba(255, 255, 255, 0.14);
       box-shadow: 0 8px 28px rgba(0, 0, 0, 0.25);
       backdrop-filter: blur(2px);
+    }
+
+    .lobby-screen {
+      max-width: 760px;
+      margin: 24px auto 0 auto;
+      text-align: center;
+      padding: 18px;
+    }
+
+    .lobby-title {
+      font-size: 1.4rem;
+      margin-bottom: 6px;
+    }
+
+    .lobby-code {
+      font-size: 1.1rem;
+      margin-bottom: 12px;
+    }
+
+    .lobby-players {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      gap: 8px;
+    }
+
+    .lobby-players li {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 1.05rem;
+      font-weight: 600;
+      color: #fff;
     }
 
     h1, h2 {
@@ -93,6 +128,21 @@
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
       gap: 12px;
+    }
+
+    .top-strip {
+      display: grid;
+      grid-template-columns: 1fr 1.3fr;
+      gap: 12px;
+    }
+
+    .compact-panel {
+      padding: 8px 10px;
+    }
+
+    .compact-panel h2 {
+      font-size: 1.05rem;
+      margin-bottom: 4px;
     }
 
     .table-area {
@@ -214,6 +264,13 @@
       background: rgba(255, 255, 255, 0.07);
     }
 
+    .felt-panel {
+      border-radius: 14px;
+      padding: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      background: rgba(9, 63, 43, 0.4);
+    }
+
     .meld-cards {
       display: flex;
       gap: 4px;
@@ -224,6 +281,11 @@
     ul {
       margin: 0;
       padding-left: 18px;
+    }
+
+    #playersList {
+      max-height: 124px;
+      overflow: auto;
     }
 
     .summary {
@@ -263,12 +325,18 @@
     .hidden {
       display: none !important;
     }
+
+    @media (max-width: 940px) {
+      .top-strip {
+        grid-template-columns: 1fr;
+      }
+    }
   </style>
 </head>
 <body>
   <div class="app">
     <div id="landingPanel" class="panel">
-      <h1>Continental Rummy</h1>
+      <h1>Continental</h1>
       <p class="small">Create a room code or join an existing room.</p>
       <div class="row">
         <input id="nameInput" placeholder="Your name" maxlength="20" />
@@ -282,27 +350,25 @@
     </div>
 
     <div id="roomPanel" class="panel hidden">
-      <h2>Room Lobby</h2>
-      <div class="row">
-        <div><strong>Room:</strong> <span id="roomCodeLabel">-</span></div>
-        <button id="startGameBtn">Start Game</button>
+      <div class="lobby-screen">
+        <div class="lobby-title">Room Lobby</div>
+        <div class="lobby-code"><strong>Room:</strong> <span id="roomCodeLabel">-</span></div>
+        <ul id="lobbyPlayersList" class="lobby-players"></ul>
+        <div class="row" style="justify-content: center; margin-top: 12px;">
+          <button id="startGameBtn">Start Game (0/5)</button>
+        </div>
       </div>
       <p id="status">Waiting in lobby...</p>
     </div>
 
     <div id="gamePanels" class="hidden">
-      <div class="grid">
-        <div class="panel">
+      <div class="top-strip">
+        <div class="panel compact-panel">
           <h2>Round / Turn</h2>
           <div id="roundInfo" class="small">Waiting for room...</div>
         </div>
 
-        <div class="panel">
-          <h2>Draw Piles</h2>
-          <div id="pileInfo" class="small">No active hand.</div>
-        </div>
-
-        <div class="panel">
+        <div class="panel compact-panel">
           <h2>Players</h2>
           <ul id="playersList"></ul>
         </div>
@@ -318,7 +384,15 @@
       </div>
 
       <div class="panel">
+        <h2>Table Melds</h2>
+        <div class="felt-panel">
+          <div id="tableMelds" class="small">No melds on table yet.</div>
+        </div>
+      </div>
+
+      <div class="panel">
         <h2>Table</h2>
+        <div id="pileInfo" class="small">No active hand.</div>
         <div class="table-area">
           <div class="pile-row">
             <button id="stockPileBtn" class="pile" title="Draw from stock pile">
@@ -353,7 +427,7 @@
           <div class="row">
             <button id="addPendingMeldBtn">Add Pending Meld From Selected</button>
             <button id="clearPendingBtn" class="secondary">Clear Pending</button>
-            <button id="openBtn">Open (Go Down)</button>
+            <button id="openBtn">Open</button>
           </div>
           <div id="pendingMelds" class="small"></div>
         </div>
@@ -368,10 +442,6 @@
         </div>
       </div>
 
-      <div class="panel">
-        <h2>Table Melds</h2>
-        <div id="tableMelds" class="small">No melds on table yet.</div>
-      </div>
     </div>
   </div>
 
