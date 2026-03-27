@@ -1,130 +1,381 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Card Game</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Continental Rummy (Room Codes)</title>
   <style>
+    :root {
+      --ink: #f0f4f8;
+      --accent: #ff8c42;
+      --good: #1d7874;
+      --warn: #b45309;
+      --muted: #d9e2ec;
+      --panel: rgba(15, 23, 42, 0.62);
+    }
+
+    * { box-sizing: border-box; }
+
     body {
-      background-image: url('images/tabletop');
-      background-size: cover; /* Ensure the image covers the entire background */
-      background-position: center; /* Center the image */
-      background-repeat: no-repeat; /* Prevent the image from repeating */
-      /*color: white; /* Set text color to white for better contrast */
-      font-family: Arial, sans-serif; /* Set a clean, readable font */
+      margin: 0;
+      font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at 10% 0%, rgba(255, 255, 255, 0.1), transparent 40%),
+        radial-gradient(circle at 90% 100%, rgba(0, 0, 0, 0.2), transparent 35%),
+        url('/images/tabletop') center / cover no-repeat fixed;
+      color: var(--ink);
+      min-height: 100vh;
     }
 
-    #hand, #drawPile, #discardPile {
-      margin: 10px 0;
-    }
-    
-    .button {
-      margin: 5px;
-    }
-
-    #actionButtons {
-      margin: 10px 0;
+    .app {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 16px;
+      display: grid;
+      gap: 12px;
     }
 
-    h1 {
+    .panel {
+      background: var(--panel);
+      border-radius: 10px;
+      padding: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.25);
+      backdrop-filter: blur(2px);
+    }
+
+    h1, h2 {
+      margin: 0 0 8px 0;
+    }
+
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    input, button, select {
+      font: inherit;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      padding: 8px 10px;
+      background: rgba(255, 255, 255, 0.95);
+      color: #102a43;
+    }
+
+    button {
+      cursor: pointer;
+      border: none;
+      color: white;
+      background: var(--good);
+    }
+
+    button.secondary { background: #486581; }
+    button.warn { background: var(--warn); }
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .small {
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    #status, #landingStatus {
+      color: var(--muted);
+      font-weight: 600;
+      min-height: 20px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 12px;
+    }
+
+    .table-area {
+      border-radius: 14px;
+      padding: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      background: rgba(9, 63, 43, 0.4);
+    }
+
+    .pile-row {
+      display: flex;
+      gap: 18px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+
+    .pile {
+      background: transparent;
+      border: none;
+      color: var(--ink);
+      padding: 0;
+      cursor: pointer;
       text-align: center;
+    }
+
+    .pile[disabled] {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .pile-label {
+      margin-top: 6px;
+      font-size: 0.9rem;
+      color: var(--muted);
+    }
+
+    .pile-card-wrap {
+      width: 82px;
+      min-height: 118px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .back-card {
+      width: 82px;
+      border-radius: 7px;
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      box-shadow: 0 8px 12px rgba(0, 0, 0, 0.35);
+    }
+
+    .pile-empty {
+      width: 82px;
+      height: 114px;
+      border-radius: 7px;
+      border: 1px dashed rgba(255, 255, 255, 0.55);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+
+    .cards {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: flex-end;
+      min-height: 118px;
+    }
+
+    .hand-card {
+      border: none;
+      background: transparent;
+      padding: 0;
+      margin: 0;
+      box-shadow: none;
+      line-height: 0;
+      cursor: pointer;
+    }
+
+    .hand-card.dragging {
+      opacity: 0.5;
+    }
+
+    .card-face {
+      width: 82px;
+      height: auto;
+      display: block;
+      border-radius: 7px;
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      box-shadow: 0 8px 12px rgba(0, 0, 0, 0.35);
+    }
+
+    .card-face.mini {
+      width: 56px;
+      margin: 0;
+    }
+
+    .card-text-fallback {
+      min-height: 96px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .hand-card.selected .card-face {
+      transform: translateY(-10px);
+      border-color: var(--accent);
+      box-shadow: 0 10px 18px rgba(0, 0, 0, 0.55), 0 0 0 2px rgba(255, 140, 66, 0.8);
+    }
+
+    .meld {
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      border-radius: 8px;
+      padding: 8px;
+      margin-top: 6px;
+      background: rgba(255, 255, 255, 0.07);
+    }
+
+    .meld-cards {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+      margin-top: 6px;
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 18px;
+    }
+
+    .summary {
+      display: none;
+    }
+
+    .summary.active {
+      display: block;
+    }
+
+    .summary-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+
+    .summary-table th,
+    .summary-table td {
+      border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+      padding: 8px 6px;
+      text-align: left;
+    }
+
+    .score-bar-wrap {
+      width: 100%;
+      height: 10px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.15);
+      overflow: hidden;
+    }
+
+    .score-bar {
+      height: 100%;
+      background: linear-gradient(90deg, #22c55e, #eab308, #ef4444);
+    }
+
+    .hidden {
+      display: none !important;
     }
   </style>
 </head>
 <body>
-  <h1>Continental</h1>
-  
-  <div id="gameInfo">
-    <p>Current Player's Turn: <span id="currentPlayer"></span></p>
-    <p>Round: <span id="round"></span></p>
-  </div>
+  <div class="app">
+    <div id="landingPanel" class="panel">
+      <h1>Continental Rummy</h1>
+      <p class="small">Create a room code or join an existing room.</p>
+      <div class="row">
+        <input id="nameInput" placeholder="Your name" maxlength="20" />
+        <button id="createRoomBtn">Create Room</button>
+      </div>
+      <div class="row" style="margin-top: 8px;">
+        <input id="roomCodeInput" placeholder="Room code" maxlength="8" style="text-transform: uppercase;" />
+        <button id="joinRoomBtn" class="secondary">Join Room</button>
+      </div>
+      <p id="landingStatus">Not connected.</p>
+    </div>
 
-  <div id="hand"></div>
-  
-  <div id="actionButtons">
-    <button id="drawButton" class="button">Draw Card</button>
-    <button id="takeButton" class="button">Take Card</button>
-    <button id="discardButton" class="button">Discard Card</button>
-    <button id="openButton" class="button">Open</button>
-    <button id="closeButton" class="button">Close</button>
+    <div id="roomPanel" class="panel hidden">
+      <h2>Room Lobby</h2>
+      <div class="row">
+        <div><strong>Room:</strong> <span id="roomCodeLabel">-</span></div>
+        <button id="startGameBtn">Start Game</button>
+      </div>
+      <p id="status">Waiting in lobby...</p>
+    </div>
+
+    <div id="gamePanels" class="hidden">
+      <div class="grid">
+        <div class="panel">
+          <h2>Round / Turn</h2>
+          <div id="roundInfo" class="small">Waiting for room...</div>
+        </div>
+
+        <div class="panel">
+          <h2>Draw Piles</h2>
+          <div id="pileInfo" class="small">No active hand.</div>
+        </div>
+
+        <div class="panel">
+          <h2>Players</h2>
+          <ul id="playersList"></ul>
+        </div>
+      </div>
+
+      <div id="roundSummaryPanel" class="panel summary">
+        <h2 id="roundSummaryTitle">Round Summary</h2>
+        <div id="roundSummaryMeta" class="small"></div>
+        <div id="roundSummaryGraphic" class="small"></div>
+        <div class="row" style="margin-top: 10px;">
+          <button id="continueRoundBtn" class="secondary">Continue</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Table</h2>
+        <div class="table-area">
+          <div class="pile-row">
+            <button id="stockPileBtn" class="pile" title="Draw from stock pile">
+              <div class="pile-card-wrap">
+                <img id="stockPileImg" class="back-card" src="/images/card_back.png" alt="Face-down stock pile" />
+              </div>
+              <div id="stockCountLabel" class="pile-label">Stock: 0</div>
+            </button>
+
+            <button id="discardPileBtn" class="pile" title="Draw from discard pile">
+              <div id="discardPileCard" class="pile-card-wrap">
+                <div class="pile-empty">Empty</div>
+              </div>
+              <div id="discardCountLabel" class="pile-label">Discard: 0</div>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Your Hand</h2>
+        <div class="row">
+          <button id="discardBtn" class="warn">Discard Selected</button>
+        </div>
+        <p class="small">Click cards to select. Drag cards to reorder your hand.</p>
+        <div id="handCards" class="cards"></div>
+      </div>
+
+      <div class="grid">
+        <div class="panel">
+          <h2>Open Melds</h2>
+          <div class="row">
+            <button id="addPendingMeldBtn">Add Pending Meld From Selected</button>
+            <button id="clearPendingBtn" class="secondary">Clear Pending</button>
+            <button id="openBtn">Open (Go Down)</button>
+          </div>
+          <div id="pendingMelds" class="small"></div>
+        </div>
+
+        <div class="panel">
+          <h2>Lay Off</h2>
+          <div class="row">
+            <select id="meldSelect"></select>
+            <button id="layoffBtn" class="secondary">Lay Off Selected</button>
+          </div>
+          <p class="small">You must already be opened this round.</p>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Table Melds</h2>
+        <div id="tableMelds" class="small">No melds on table yet.</div>
+      </div>
+    </div>
   </div>
-  
-  <div id="drawPile">Draw Pile: </div>
-  <div id="discardPile">Discard Pile: </div>
 
   <script src="/socket.io/socket.io.js"></script>
-  <script>
-    const socket = io();
-
-    socket.on('updateGameState', (gameState) => {
-      const hand = gameState.hands[socket.id];
-      document.getElementById('hand').innerHTML = hand.map(card => `${card.rank} of ${card.suit}`).join(', ');
-
-      document.getElementById('drawPile').innerText = `Draw Pile: ${gameState.drawPile.length} cards`;
-      document.getElementById('discardPile').innerText = `Discard Pile: ${gameState.discardPile.map(card => `${card.rank} of ${card.suit}`).join(', ')}`;
-
-      document.getElementById('round').innerText = gameState.round;
-
-      const currentPlayer = gameState.currentPlayer;
-      document.getElementById('currentPlayer').innerText = currentPlayer ? `Player ${currentPlayer}` : 'None';
-      
-      // Check if the current player is the logged-in player
-      const isCurrentPlayer = socket.id === currentPlayer;
-      document.getElementById('drawButton').disabled = !isCurrentPlayer;
-      document.getElementById('takeButton').disabled = !isCurrentPlayer;
-      document.getElementById('discardButton').disabled = !isCurrentPlayer;
-      document.getElementById('openButton').disabled = !isCurrentPlayer || gameState.playersOpened.includes(socket.id);
-      document.getElementById('closeButton').disabled = !isCurrentPlayer;
-    });
-
-    socket.on('playerTurn', ({ playerId }) => {
-      const currentPlayerText = playerId ? `Player ${playerId}` : 'None';
-      document.getElementById('currentPlayer').innerText = currentPlayerText;
-    });
-
-    document.getElementById('drawButton').addEventListener('click', () => {
-      socket.emit('drawCard');
-    });
-
-    document.getElementById('takeButton').addEventListener('click', () => {
-      socket.emit('takeCard');
-    });
-
-    document.getElementById('discardButton').addEventListener('click', () => {
-      const selectedCard = prompt('Enter the rank and suit of the card to discard (e.g., "5 of hearts")');
-      const [rank, , suit] = selectedCard.split(' ');
-      socket.emit('discardCard', { rank, suit });
-    });
-
-    document.getElementById('openButton').addEventListener('click', () => {
-      const selectedCard = prompt('Enter the rank and suit of the card to open (e.g., "5 of hearts")');
-      const [rank, , suit] = selectedCard.split(' ');
-      socket.emit('selectCardForOpening', { rank, suit });
-    });
-
-    document.getElementById('closeButton').addEventListener('click', () => {
-      socket.emit('close');
-    });
-
-    socket.on('openValid', (playerId) => {
-      alert(`Player ${playerId} successfully opened!`);
-    });
-
-    socket.on('invalidOpening', () => {
-      alert('Invalid opening. Please try again.');
-    });
-
-    socket.on('invalidClose', () => {
-      alert('Invalid close. Please ensure your hand meets the requirements.');
-    });
-
-    socket.on('gameOver', (scores) => {
-      alert(`Game Over! Final Scores: ${JSON.stringify(scores)}`);
-    });
-
-    socket.on('notYourTurn', () => {
-      alert('It\'s not your turn.');
-    });
-  </script>
+  <script src="/script.js"></script>
 </body>
 </html>

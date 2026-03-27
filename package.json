@@ -1,0 +1,13 @@
+{
+  "name": "continental-card-game",
+  "version": "1.0.0",
+  "description": "Web-based multiplayer Continental-style rummy for up to 5 players.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  }
+}
