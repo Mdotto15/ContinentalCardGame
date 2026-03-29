@@ -35,6 +35,33 @@
       gap: 12px;
     }
 
+    .turn-badge-wrap {
+      display: flex;
+      justify-content: center;
+      margin-top: 2px;
+    }
+
+    .turn-badge {
+      display: none;
+      padding: 8px 16px;
+      border-radius: 999px;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+      background: rgba(255, 255, 255, 0.14);
+      border: 1px solid rgba(255, 255, 255, 0.28);
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+    }
+
+    .turn-badge.active {
+      display: inline-block;
+    }
+
+    .turn-badge.yours {
+      background: rgba(29, 120, 116, 0.35);
+      border-color: rgba(77, 255, 166, 0.8);
+      box-shadow: 0 0 0 2px rgba(77, 255, 166, 0.28), 0 8px 20px rgba(0, 0, 0, 0.35);
+    }
+
     .panel {
       background: var(--panel);
       border-radius: 10px;
@@ -158,6 +185,25 @@
       align-items: center;
       flex-wrap: wrap;
       margin-top: 8px;
+    }
+
+    .claim-announcement {
+      display: none;
+      margin-left: 8px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      color: #fff;
+      align-items: center;
+      gap: 8px;
+      width: fit-content;
+      max-width: 100%;
+      align-self: center;
+    }
+
+    .claim-announcement.active {
+      display: inline-flex;
     }
 
     .pile {
@@ -288,14 +334,6 @@
       overflow: auto;
     }
 
-    .summary {
-      display: none;
-    }
-
-    .summary.active {
-      display: block;
-    }
-
     .summary-table {
       width: 100%;
       border-collapse: collapse;
@@ -322,8 +360,77 @@
       background: linear-gradient(90deg, #22c55e, #eab308, #ef4444);
     }
 
+    .winner-row {
+      background: rgba(76, 255, 152, 0.14);
+      outline: 1px solid rgba(76, 255, 152, 0.55);
+    }
+
+    .winner-badge {
+      margin-left: 6px;
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: #7dffbf;
+    }
+
     .hidden {
       display: none !important;
+    }
+
+    .hand-panel.your-turn {
+      border-color: rgba(77, 255, 166, 0.9);
+      box-shadow: 0 0 0 2px rgba(77, 255, 166, 0.26), 0 10px 30px rgba(0, 0, 0, 0.35);
+    }
+
+    .round-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(7, 12, 18, 0.78);
+      backdrop-filter: blur(2px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 999;
+      padding: 16px;
+    }
+
+    .round-overlay.active {
+      display: flex;
+    }
+
+    .round-overlay-card {
+      width: min(1120px, 96vw);
+      max-height: 92vh;
+      overflow: auto;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      background: rgba(10, 22, 35, 0.92);
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4);
+      padding: 14px;
+    }
+
+    .hands-grid {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .hand-review {
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 8px;
+      padding: 8px;
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .hand-review-title {
+      font-size: 0.95rem;
+      margin-bottom: 6px;
+      color: #e6f0ff;
+    }
+
+    .review-cards {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
     }
 
     @media (max-width: 940px) {
@@ -339,7 +446,7 @@
       <h1>Continental</h1>
       <p class="small">Create a room code or join an existing room.</p>
       <div class="row">
-        <input id="nameInput" placeholder="Your name" maxlength="20" />
+        <input id="nameInput" placeholder="Your name" maxlength="45" />
         <button id="createRoomBtn">Create Room</button>
       </div>
       <div class="row" style="margin-top: 8px;">
@@ -362,6 +469,10 @@
     </div>
 
     <div id="gamePanels" class="hidden">
+      <div class="turn-badge-wrap">
+        <div id="turnBadge" class="turn-badge">Turn</div>
+      </div>
+
       <div class="top-strip">
         <div class="panel compact-panel">
           <h2>Round / Turn</h2>
@@ -371,15 +482,6 @@
         <div class="panel compact-panel">
           <h2>Players</h2>
           <ul id="playersList"></ul>
-        </div>
-      </div>
-
-      <div id="roundSummaryPanel" class="panel summary">
-        <h2 id="roundSummaryTitle">Round Summary</h2>
-        <div id="roundSummaryMeta" class="small"></div>
-        <div id="roundSummaryGraphic" class="small"></div>
-        <div class="row" style="margin-top: 10px;">
-          <button id="continueRoundBtn" class="secondary">Continue</button>
         </div>
       </div>
 
@@ -408,11 +510,12 @@
               </div>
               <div id="discardCountLabel" class="pile-label">Discard: 0</div>
             </button>
+            <div id="claimAnnouncement" class="claim-announcement"></div>
           </div>
         </div>
       </div>
 
-      <div class="panel">
+      <div id="handPanel" class="panel hand-panel">
         <h2>Your Hand</h2>
         <div class="row">
           <button id="discardBtn" class="warn">Discard Selected</button>
@@ -442,6 +545,20 @@
         </div>
       </div>
 
+    </div>
+
+    <div id="roundOverlay" class="round-overlay">
+      <div class="round-overlay-card">
+        <h2 id="roundSummaryTitle">Round Summary</h2>
+        <div id="roundSummaryMeta" class="small"></div>
+        <div id="roundSummaryGraphic" class="small"></div>
+        <h3 style="margin: 12px 0 6px 0;">Hands (Round Validation)</h3>
+        <div id="roundSummaryHands" class="hands-grid"></div>
+        <div class="row" style="margin-top: 12px;">
+          <button id="continueRoundBtn" class="secondary">Continue</button>
+          <button id="endGameBtn" class="warn hidden">End Game</button>
+        </div>
+      </div>
     </div>
   </div>
 

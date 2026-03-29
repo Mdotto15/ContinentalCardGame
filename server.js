@@ -6,6 +6,7 @@ const { Server } = require('socket.io');
 const PORT = process.env.PORT || 3000;
 const MAX_PLAYERS = 5;
 const ROOM_CODE_LENGTH = 5;
+const RECONNECT_GRACE_MS = 120000;
 
 const CONTRACTS = [
   { sets: 2, runs: 0, minCards: 6, label: 'Two sets' },
@@ -30,12 +31,15 @@ app.get('/', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'index.h
 
 const rooms = new Map();
 const socketToRoom = new Map();
+const socketToPlayer = new Map();
 
 function createRoomState(code) {
   return {
     code,
     players: [],
     playerNames: {},
+    playerSockets: {},
+    disconnectTimers: {},
     scores: {},
     round: 0,
     phase: 'lobby',
@@ -50,7 +54,10 @@ function createRoomState(code) {
     openedThisTurn: false,
     discardClaimOpen: false,
     discardClaimCardId: null,
+    discardClaimSourcePlayerId: null,
     discardClaimers: [],
+    lastDiscardBy: null,
+    discardSerial: 0,
     winnerOfHand: null,
     roundSummary: null,
   };
@@ -152,6 +159,7 @@ function makePublicState(room, forPlayerId) {
     handCount: room.hands[id] ? room.hands[id].length : 0,
     opened: Boolean(room.openedThisRound[id]),
     score: Number.isFinite(room.scores[id]) ? room.scores[id] : 0,
+    connected: Boolean(room.playerSockets[id]),
   }));
 
   return {
@@ -172,6 +180,7 @@ function makePublicState(room, forPlayerId) {
     stockCount: room.stock.length,
     discardTop: room.discard[room.discard.length - 1] || null,
     discardCount: room.discard.length,
+    discardSerial: room.discardSerial,
     tableMelds: room.tableMelds,
     winnerOfHand: room.winnerOfHand,
     roundSummary: room.roundSummary,
@@ -181,7 +190,9 @@ function makePublicState(room, forPlayerId) {
 
 function emitState(room) {
   for (const playerId of room.players) {
-    io.to(playerId).emit('state', makePublicState(room, playerId));
+    const socketId = room.playerSockets[playerId];
+    if (!socketId) continue;
+    io.to(socketId).emit('state', makePublicState(room, playerId));
   }
 }
 
@@ -196,6 +207,7 @@ function nextTurn(room) {
   room.openedThisTurn = false;
   room.discardClaimOpen = false;
   room.discardClaimCardId = null;
+  room.discardClaimSourcePlayerId = null;
   room.discardClaimers = [];
 }
 
@@ -361,7 +373,9 @@ function finishHand(room, winnerId, wentOutByOpening) {
   const winnerBonus = wentOutByOpening ? -10 : 0;
 
   const rows = room.players.map((playerId, index) => {
-    let roundScore = scoreHand(room, playerId);
+    const handCards = sortHand([...(room.hands[playerId] || [])]);
+    const handPoints = handCards.reduce((sum, card) => sum + cardValue(card), 0);
+    let roundScore = handPoints;
     if (playerId === winnerId) roundScore = winnerBonus;
     room.scores[playerId] += roundScore;
     return {
@@ -369,8 +383,17 @@ function finishHand(room, winnerId, wentOutByOpening) {
       name: room.playerNames[playerId] || `Player ${index + 1}`,
       roundScore,
       totalScore: room.scores[playerId],
+      handPoints,
+      handCards,
     };
   });
+
+  const isFinalRound = room.round >= CONTRACTS.length;
+  let gameWinnerIds = [];
+  if (isFinalRound) {
+    const minScore = Math.min(...rows.map((r) => r.totalScore));
+    gameWinnerIds = rows.filter((r) => r.totalScore === minScore).map((r) => r.id);
+  }
 
   room.roundSummary = {
     round: room.round,
@@ -378,11 +401,14 @@ function finishHand(room, winnerId, wentOutByOpening) {
     winnerBonus,
     rows,
     canContinue: room.round < CONTRACTS.length,
+    isFinalRound,
+    gameWinnerIds,
   };
 
-  room.phase = room.round >= CONTRACTS.length ? 'finished' : 'roundSummary';
+  room.phase = isFinalRound ? 'finished' : 'roundSummary';
   room.discardClaimOpen = false;
   room.discardClaimCardId = null;
+  room.discardClaimSourcePlayerId = null;
   room.discardClaimers = [];
 }
 
@@ -403,7 +429,13 @@ function startRound(room) {
 
   room.stock = shoe;
   room.discard = [];
-  if (room.stock.length > 0) room.discard.push(room.stock.pop());
+  if (room.stock.length > 0) {
+    room.discard.push(room.stock.pop());
+    room.lastDiscardBy = null; // initial exposed card is not from a player's discard
+  } else {
+    room.lastDiscardBy = null;
+  }
+  room.discardSerial = 0;
 
   room.dealerIndex = room.dealerIndex % room.players.length;
   room.turnIndex = (room.dealerIndex + 1) % room.players.length;
@@ -411,6 +443,7 @@ function startRound(room) {
   room.openedThisTurn = false;
   room.discardClaimOpen = false;
   room.discardClaimCardId = null;
+  room.discardClaimSourcePlayerId = null;
   room.discardClaimers = [];
 }
 
@@ -449,11 +482,123 @@ function awardDiscardClaimIfAny(room) {
 
   const [claimedCard] = room.discard.splice(targetIdx, 1);
   room.hands[winnerId].push(claimedCard);
+  // Claim is resolved just before current player discards. Keep this visible
+  // through that discard and clear on the next player's discard phase.
+  emitDiscardPickupAnnouncement(room, winnerId, claimedCard, 2);
+}
+
+function emitDiscardPickupAnnouncement(room, playerId, card, clearAfterDiscards = 1) {
+  const playerName = room.playerNames[playerId] || 'Player';
+  const clearAfterDiscardSerial = room.discardSerial + clearAfterDiscards;
+  for (const roomPlayerId of room.players) {
+    const socketId = room.playerSockets[roomPlayerId];
+    if (!socketId) continue;
+    io.to(socketId).emit('discardPickupAnnouncement', {
+      playerName,
+      card,
+      clearAfterDiscardSerial,
+    });
+  }
 }
 
 function cleanupRoomIfEmpty(roomCode) {
   const room = rooms.get(roomCode);
   if (room && room.players.length === 0) rooms.delete(roomCode);
+}
+
+function clearDisconnectTimer(room, playerId) {
+  const timer = room.disconnectTimers[playerId];
+  if (timer) {
+    clearTimeout(timer);
+    delete room.disconnectTimers[playerId];
+  }
+}
+
+function bindPlayerSocket(room, playerId, socketId) {
+  clearDisconnectTimer(room, playerId);
+  room.playerSockets[playerId] = socketId;
+  socketToRoom.set(socketId, room.code);
+  socketToPlayer.set(socketId, playerId);
+}
+
+function removePlayerFromRoom(room, playerId) {
+  if (!room) return;
+  const idx = room.players.indexOf(playerId);
+  if (idx === -1) return;
+  const wasCurrentPlayer = currentPlayerId(room) === playerId;
+
+  clearDisconnectTimer(room, playerId);
+  const activeSocketId = room.playerSockets[playerId];
+  if (activeSocketId) {
+    socketToRoom.delete(activeSocketId);
+    socketToPlayer.delete(activeSocketId);
+  }
+
+  room.players.splice(idx, 1);
+  delete room.playerNames[playerId];
+  delete room.playerSockets[playerId];
+  delete room.scores[playerId];
+  delete room.hands[playerId];
+  delete room.openedThisRound[playerId];
+  room.discardClaimers = room.discardClaimers.filter((id) => id !== playerId);
+
+  if (room.players.length === 0) {
+    rooms.delete(room.code);
+    return;
+  }
+
+  if (idx <= room.dealerIndex && room.dealerIndex > 0) room.dealerIndex -= 1;
+  if (idx < room.turnIndex && room.turnIndex > 0) room.turnIndex -= 1;
+  if (room.turnIndex >= room.players.length) room.turnIndex = 0;
+  if (room.dealerIndex >= room.players.length) room.dealerIndex = 0;
+
+  room.tableMelds = room.tableMelds.filter((meld) => meld.ownerId !== playerId);
+
+  if (room.phase === 'inRound' && room.players.length < 2) {
+    room.phase = 'lobby';
+    room.round = 0;
+    room.stock = [];
+    room.discard = [];
+    room.tableMelds = [];
+    room.hands = Object.fromEntries(room.players.map((p) => [p, []]));
+    room.roundSummary = null;
+    room.winnerOfHand = null;
+  }
+
+  if (room.phase === 'inRound' && wasCurrentPlayer) {
+    room.turnStage = 'draw';
+    room.openedThisTurn = false;
+    room.discardClaimOpen = false;
+    room.discardClaimCardId = null;
+    room.discardClaimSourcePlayerId = null;
+    room.discardClaimers = [];
+  }
+
+  emitState(room);
+  cleanupRoomIfEmpty(room.code);
+}
+
+function handleSocketDisconnect(socketId) {
+  const roomCode = socketToRoom.get(socketId);
+  const playerId = socketToPlayer.get(socketId);
+  socketToRoom.delete(socketId);
+  socketToPlayer.delete(socketId);
+  if (!roomCode || !playerId) return;
+
+  const room = rooms.get(roomCode);
+  if (!room) return;
+  if (room.playerSockets[playerId] !== socketId) return;
+
+  room.playerSockets[playerId] = null;
+  clearDisconnectTimer(room, playerId);
+  room.disconnectTimers[playerId] = setTimeout(() => {
+    const liveRoom = rooms.get(roomCode);
+    if (!liveRoom) return;
+    if (liveRoom.playerSockets[playerId]) return;
+    removePlayerFromRoom(liveRoom, playerId);
+  }, RECONNECT_GRACE_MS);
+
+  emitState(room);
 }
 
 function getRoomForSocket(socketId) {
@@ -462,46 +607,76 @@ function getRoomForSocket(socketId) {
   return rooms.get(roomCode) || null;
 }
 
-function addPlayerToRoom(room, socketId, name) {
-  room.players.push(socketId);
-  room.playerNames[socketId] = name;
-  room.scores[socketId] = 0;
-  room.hands[socketId] = [];
-  socketToRoom.set(socketId, room.code);
+function getPlayerForSocket(socketId) {
+  return socketToPlayer.get(socketId) || null;
+}
+
+function addPlayerToRoom(room, playerId, name, socketId) {
+  room.players.push(playerId);
+  room.playerNames[playerId] = name;
+  room.playerSockets[playerId] = null;
+  room.scores[playerId] = 0;
+  room.hands[playerId] = [];
+  bindPlayerSocket(room, playerId, socketId);
+}
+
+function sanitizePlayerToken(input) {
+  const token = String(input || '').trim();
+  if (!token) return null;
+  return token.slice(0, 128);
 }
 
 io.on('connection', (socket) => {
-  socket.on('createRoom', ({ name }) => {
+  socket.on('createRoom', ({ name, playerToken }) => {
     if (socketToRoom.has(socket.id)) return sendError(socket, 'You are already in a room.');
+    const token = sanitizePlayerToken(playerToken);
+    if (!token) return sendError(socket, 'Missing player token. Refresh and try again.');
     const cleanName = String(name || '').trim() || 'Player 1';
     const code = generateRoomCode();
     const room = createRoomState(code);
     rooms.set(code, room);
-    addPlayerToRoom(room, socket.id, cleanName);
+    addPlayerToRoom(room, token, cleanName, socket.id);
     socket.emit('roomJoined', { roomCode: code });
     emitState(room);
   });
 
-  socket.on('joinRoom', ({ roomCode, name }) => {
+  socket.on('joinRoom', ({ roomCode, name, playerToken }) => {
     if (socketToRoom.has(socket.id)) return sendError(socket, 'You are already in a room.');
     const code = String(roomCode || '').trim().toUpperCase();
+    const token = sanitizePlayerToken(playerToken);
+    if (!token) return sendError(socket, 'Missing player token. Refresh and try again.');
     const room = rooms.get(code);
     if (!room) return sendError(socket, 'Room not found.');
+
+    const cleanName = String(name || '').trim() || `Player ${room.players.length + 1}`;
+    const existingIndex = room.players.indexOf(token);
+    if (existingIndex !== -1) {
+      const existingSocket = room.playerSockets[token];
+      if (existingSocket && existingSocket !== socket.id) {
+        return sendError(socket, 'This player is already connected.');
+      }
+      room.playerNames[token] = cleanName;
+      bindPlayerSocket(room, token, socket.id);
+      socket.emit('roomJoined', { roomCode: code });
+      emitState(room);
+      return;
+    }
+
     if (room.players.length >= MAX_PLAYERS) return sendError(socket, 'Room is full (max 5 players).');
     if (room.phase !== 'lobby') return sendError(socket, 'Game already started in this room.');
 
-    const cleanName = String(name || '').trim() || `Player ${room.players.length + 1}`;
-    addPlayerToRoom(room, socket.id, cleanName);
+    addPlayerToRoom(room, token, cleanName, socket.id);
     socket.emit('roomJoined', { roomCode: code });
     emitState(room);
   });
 
   socket.on('startGame', () => {
     const room = getRoomForSocket(socket.id);
+    const playerId = getPlayerForSocket(socket.id);
     if (!room) return;
     if (room.phase !== 'lobby') return sendError(socket, 'Game is already running.');
     if (room.players.length < 2) return sendError(socket, 'Need at least 2 players to start.');
-    if (socket.id !== room.players[0]) return sendError(socket, 'Only the room host can start the game.');
+    if (playerId !== room.players[0]) return sendError(socket, 'Only the room host can start the game.');
 
     startGame(room);
     emitState(room);
@@ -509,56 +684,66 @@ io.on('connection', (socket) => {
 
   socket.on('drawStock', () => {
     const room = getRoomForSocket(socket.id);
+    const playerId = getPlayerForSocket(socket.id);
     if (!room || room.phase !== 'inRound') return;
-    if (socket.id !== currentPlayerId(room)) return sendError(socket, 'Not your turn.');
+    if (playerId !== currentPlayerId(room)) return sendError(socket, 'Not your turn.');
     if (room.turnStage !== 'draw') return sendError(socket, 'You must discard after drawing.');
 
     ensureStock(room);
     if (room.stock.length === 0) return sendError(socket, 'No cards left in stock.');
 
-    room.hands[socket.id].push(room.stock.pop());
+    room.hands[playerId].push(room.stock.pop());
     room.turnStage = 'discard';
     room.openedThisTurn = false;
     room.discardClaimOpen = Boolean(room.discard.length > 0);
     room.discardClaimCardId = room.discardClaimOpen ? room.discard[room.discard.length - 1].id : null;
+    room.discardClaimSourcePlayerId = room.discardClaimOpen ? room.lastDiscardBy : null;
     room.discardClaimers = [];
     emitState(room);
   });
 
   socket.on('drawDiscard', () => {
     const room = getRoomForSocket(socket.id);
+    const playerId = getPlayerForSocket(socket.id);
     if (!room || room.phase !== 'inRound') return;
-    if (socket.id !== currentPlayerId(room)) return sendError(socket, 'Not your turn.');
+    if (playerId !== currentPlayerId(room)) return sendError(socket, 'Not your turn.');
     if (room.turnStage !== 'draw') return sendError(socket, 'You must discard after drawing.');
     if (room.discard.length === 0) return sendError(socket, 'Discard pile is empty.');
 
-    room.hands[socket.id].push(room.discard.pop());
+    const takenCard = room.discard.pop();
+    room.hands[playerId].push(takenCard);
     room.turnStage = 'discard';
     room.openedThisTurn = false;
     room.discardClaimOpen = false;
     room.discardClaimCardId = null;
+    room.discardClaimSourcePlayerId = null;
     room.discardClaimers = [];
+    // For normal discard-pile draw: clear after this same player's discard.
+    emitDiscardPickupAnnouncement(room, playerId, takenCard, 1);
     emitState(room);
   });
 
   socket.on('claimDiscard', () => {
     const room = getRoomForSocket(socket.id);
+    const playerId = getPlayerForSocket(socket.id);
     if (!room || room.phase !== 'inRound') return;
     if (!room.discardClaimOpen || !room.discardClaimCardId) return;
-    if (socket.id === currentPlayerId(room)) return;
+    if (playerId === currentPlayerId(room)) return;
+    if (playerId === room.discardClaimSourcePlayerId) return;
 
-    if (!room.discardClaimers.includes(socket.id)) {
-      room.discardClaimers.push(socket.id);
+    if (!room.discardClaimers.includes(playerId)) {
+      room.discardClaimers.push(playerId);
       emitState(room);
     }
   });
 
   socket.on('open', ({ meldCardIds }) => {
     const room = getRoomForSocket(socket.id);
+    const playerId = getPlayerForSocket(socket.id);
     if (!room || room.phase !== 'inRound') return;
-    if (socket.id !== currentPlayerId(room)) return sendError(socket, 'Not your turn.');
+    if (playerId !== currentPlayerId(room)) return sendError(socket, 'Not your turn.');
     if (room.turnStage !== 'discard') return sendError(socket, 'Draw first.');
-    if (room.openedThisRound[socket.id]) return sendError(socket, 'You already opened this round.');
+    if (room.openedThisRound[playerId]) return sendError(socket, 'You already opened this round.');
 
     const groups = Array.isArray(meldCardIds) ? meldCardIds : [];
     if (groups.length === 0) return sendError(socket, 'Select cards for opening melds.');
@@ -567,14 +752,14 @@ io.on('connection', (socket) => {
     const unique = new Set(flat);
     if (flat.length !== unique.size) return sendError(socket, 'A card cannot be used in multiple melds.');
 
-    const extracted = removeCardsFromHand(room, socket.id, [...unique]);
+    const extracted = removeCardsFromHand(room, playerId, [...unique]);
     if (!extracted) return sendError(socket, 'One or more selected cards are not in your hand.');
 
     const byId = new Map(extracted.map((c) => [c.id, c]));
     const melds = groups.map((ids) => ids.map((id) => byId.get(id)).filter(Boolean));
     const valid = validateOpenMelds(room, melds);
     if (!valid.ok) {
-      room.hands[socket.id].push(...extracted);
+      room.hands[playerId].push(...extracted);
       sendError(socket, valid.error);
       emitState(room);
       return;
@@ -584,26 +769,27 @@ io.on('connection', (socket) => {
       const meldType = classifyMeld(cards);
       room.tableMelds.push({
         id: `m${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        ownerId: socket.id,
+        ownerId: playerId,
         type: meldType,
         cards: meldType === 'run' ? buildRunArrangement(cards) : cards,
       });
     });
 
-    room.openedThisRound[socket.id] = true;
+    room.openedThisRound[playerId] = true;
     room.openedThisTurn = true;
-    if (room.hands[socket.id].length === 0) {
-      finishHand(room, socket.id, true);
+    if (room.hands[playerId].length === 0) {
+      finishHand(room, playerId, true);
     }
     emitState(room);
   });
 
   socket.on('layoff', ({ meldId, cardIds }) => {
     const room = getRoomForSocket(socket.id);
+    const playerId = getPlayerForSocket(socket.id);
     if (!room || room.phase !== 'inRound') return;
-    if (socket.id !== currentPlayerId(room)) return sendError(socket, 'Not your turn.');
+    if (playerId !== currentPlayerId(room)) return sendError(socket, 'Not your turn.');
     if (room.turnStage !== 'discard') return sendError(socket, 'Draw first.');
-    if (!room.openedThisRound[socket.id]) return sendError(socket, 'You must open before laying off.');
+    if (!room.openedThisRound[playerId]) return sendError(socket, 'You must open before laying off.');
 
     const target = room.tableMelds.find((m) => m.id === meldId);
     if (!target) return sendError(socket, 'Target meld not found.');
@@ -611,31 +797,32 @@ io.on('connection', (socket) => {
     const ids = Array.isArray(cardIds) ? cardIds : [];
     if (ids.length === 0) return sendError(socket, 'Select at least one card to lay off.');
 
-    const extracted = removeCardsFromHand(room, socket.id, ids);
+    const extracted = removeCardsFromHand(room, playerId, ids);
     if (!extracted) return sendError(socket, 'One or more selected cards are not in your hand.');
 
     const merged = addCardsToMeld(target, extracted);
     if (!merged) {
-      room.hands[socket.id].push(...extracted);
+      room.hands[playerId].push(...extracted);
       sendError(socket, 'Those cards do not fit the selected meld.');
       emitState(room);
       return;
     }
 
     target.cards = merged;
-    if (room.hands[socket.id].length === 0) {
-      finishHand(room, socket.id, room.openedThisTurn);
+    if (room.hands[playerId].length === 0) {
+      finishHand(room, playerId, room.openedThisTurn);
     }
     emitState(room);
   });
 
   socket.on('discard', ({ cardId }) => {
     const room = getRoomForSocket(socket.id);
+    const playerId = getPlayerForSocket(socket.id);
     if (!room || room.phase !== 'inRound') return;
-    if (socket.id !== currentPlayerId(room)) return sendError(socket, 'Not your turn.');
+    if (playerId !== currentPlayerId(room)) return sendError(socket, 'Not your turn.');
     if (room.turnStage !== 'discard') return sendError(socket, 'Draw first.');
 
-    const extracted = removeCardsFromHand(room, socket.id, [cardId]);
+    const extracted = removeCardsFromHand(room, playerId, [cardId]);
     if (!extracted || extracted.length !== 1) {
       return sendError(socket, 'Selected discard card is not in your hand.');
     }
@@ -644,11 +831,14 @@ io.on('connection', (socket) => {
     awardDiscardClaimIfAny(room);
 
     room.discard.push(extracted[0]);
+    room.lastDiscardBy = playerId;
+    room.discardSerial += 1;
     room.discardClaimOpen = false;
     room.discardClaimCardId = null;
+    room.discardClaimSourcePlayerId = null;
     room.discardClaimers = [];
-    if (room.hands[socket.id].length === 0) {
-      finishHand(room, socket.id, room.openedThisTurn);
+    if (room.hands[playerId].length === 0) {
+      finishHand(room, playerId, room.openedThisTurn);
       emitState(room);
       return;
     }
@@ -659,8 +849,9 @@ io.on('connection', (socket) => {
 
   socket.on('continueRound', () => {
     const room = getRoomForSocket(socket.id);
+    const playerId = getPlayerForSocket(socket.id);
     if (!room || room.phase !== 'roundSummary') return;
-    if (socket.id !== room.players[0]) return sendError(socket, 'Only the room host can continue to next round.');
+    if (playerId !== room.players[0]) return sendError(socket, 'Only the room host can continue to next round.');
 
     room.round += 1;
     room.dealerIndex = (room.dealerIndex + 1) % room.players.length;
@@ -668,58 +859,17 @@ io.on('connection', (socket) => {
     emitState(room);
   });
 
-  socket.on('disconnect', () => {
-    const roomCode = socketToRoom.get(socket.id);
-    if (!roomCode) return;
-
-    const room = rooms.get(roomCode);
+  socket.on('leaveRoom', () => {
+    const room = getRoomForSocket(socket.id);
+    const playerId = getPlayerForSocket(socket.id);
+    if (room && playerId) removePlayerFromRoom(room, playerId);
     socketToRoom.delete(socket.id);
-    if (!room) return;
+    socketToPlayer.delete(socket.id);
+    socket.emit('leftRoom');
+  });
 
-    const idx = room.players.indexOf(socket.id);
-    if (idx === -1) return;
-    const wasCurrentPlayer = currentPlayerId(room) === socket.id;
-
-    room.players.splice(idx, 1);
-    delete room.playerNames[socket.id];
-    delete room.scores[socket.id];
-    delete room.hands[socket.id];
-    delete room.openedThisRound[socket.id];
-    room.discardClaimers = room.discardClaimers.filter((id) => id !== socket.id);
-
-    if (room.players.length === 0) {
-      rooms.delete(roomCode);
-      return;
-    }
-
-    if (idx <= room.dealerIndex && room.dealerIndex > 0) room.dealerIndex -= 1;
-    if (idx < room.turnIndex && room.turnIndex > 0) room.turnIndex -= 1;
-    if (room.turnIndex >= room.players.length) room.turnIndex = 0;
-    if (room.dealerIndex >= room.players.length) room.dealerIndex = 0;
-
-    room.tableMelds = room.tableMelds.filter((meld) => meld.ownerId !== socket.id);
-
-    if (room.phase === 'inRound' && room.players.length < 2) {
-      room.phase = 'lobby';
-      room.round = 0;
-      room.stock = [];
-      room.discard = [];
-      room.tableMelds = [];
-      room.hands = Object.fromEntries(room.players.map((p) => [p, []]));
-      room.roundSummary = null;
-      room.winnerOfHand = null;
-    }
-
-    if (room.phase === 'inRound' && wasCurrentPlayer) {
-      room.turnStage = 'draw';
-      room.openedThisTurn = false;
-      room.discardClaimOpen = false;
-      room.discardClaimCardId = null;
-      room.discardClaimers = [];
-    }
-
-    emitState(room);
-    cleanupRoomIfEmpty(roomCode);
+  socket.on('disconnect', () => {
+    handleSocketDisconnect(socket.id);
   });
 });
 

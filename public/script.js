@@ -1,4 +1,7 @@
 const socket = io();
+const PLAYER_TOKEN_STORAGE_KEY = 'continental_player_token_v1';
+const PLAYER_NAME_STORAGE_KEY = 'continental_player_name_v1';
+const LAST_ROOM_STORAGE_KEY = 'continental_last_room_v1';
 
 const landingPanel = document.getElementById('landingPanel');
 const roomPanel = document.getElementById('roomPanel');
@@ -16,18 +19,23 @@ const statusEl = document.getElementById('status');
 const roomCodeLabel = document.getElementById('roomCodeLabel');
 const roundInfoEl = document.getElementById('roundInfo');
 const pileInfoEl = document.getElementById('pileInfo');
+const turnBadge = document.getElementById('turnBadge');
+const handPanel = document.getElementById('handPanel');
 
-const roundSummaryPanel = document.getElementById('roundSummaryPanel');
+const roundOverlay = document.getElementById('roundOverlay');
 const roundSummaryTitle = document.getElementById('roundSummaryTitle');
 const roundSummaryMeta = document.getElementById('roundSummaryMeta');
 const roundSummaryGraphic = document.getElementById('roundSummaryGraphic');
+const roundSummaryHands = document.getElementById('roundSummaryHands');
 const continueRoundBtn = document.getElementById('continueRoundBtn');
+const endGameBtn = document.getElementById('endGameBtn');
 
 const stockPileBtn = document.getElementById('stockPileBtn');
 const discardPileBtn = document.getElementById('discardPileBtn');
 const stockCountLabel = document.getElementById('stockCountLabel');
 const discardCountLabel = document.getElementById('discardCountLabel');
 const discardPileCard = document.getElementById('discardPileCard');
+const claimAnnouncementEl = document.getElementById('claimAnnouncement');
 
 const playersListEl = document.getElementById('playersList');
 const handCardsEl = document.getElementById('handCards');
@@ -46,9 +54,45 @@ let selectedCardIds = new Set();
 let pendingMelds = [];
 let handOrderIds = [];
 let draggedCardId = null;
+let claimAnnouncementTimer = null;
+let claimAnnouncementClearAfterSerial = null;
+const playerToken = getOrCreatePlayerToken();
 
 function sanitizeCode(input) {
   return String(input || '').trim().toUpperCase();
+}
+
+function getOrCreatePlayerToken() {
+  const existing = localStorage.getItem(PLAYER_TOKEN_STORAGE_KEY);
+  if (existing) return existing;
+
+  const generated = (window.crypto && typeof window.crypto.randomUUID === 'function')
+    ? window.crypto.randomUUID()
+    : `ptok-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+  localStorage.setItem(PLAYER_TOKEN_STORAGE_KEY, generated);
+  return generated;
+}
+
+const savedName = localStorage.getItem(PLAYER_NAME_STORAGE_KEY);
+if (savedName) nameInput.value = savedName;
+
+const savedRoomCode = sanitizeCode(localStorage.getItem(LAST_ROOM_STORAGE_KEY) || '');
+if (savedRoomCode) roomCodeInput.value = savedRoomCode;
+
+function resetToLanding(message) {
+  joinedRoomCode = null;
+  state = null;
+  selectedCardIds.clear();
+  pendingMelds = [];
+  handOrderIds = [];
+  clearClaimAnnouncement();
+  hideRoundOverlay();
+  renderLayout();
+  localStorage.removeItem(LAST_ROOM_STORAGE_KEY);
+
+  if (message) {
+    landingStatus.textContent = message;
+  }
 }
 
 function syncHandOrder() {
@@ -89,6 +133,7 @@ function cardLabel(card) {
 function cardFilename(card) {
   if (!card) return null;
   if (card.rank === 'JOKER') return card.suit === 'red' ? 'red_joker.png' : 'black_joker.png';
+
   const rankMap = { A: 'ace', K: 'king', Q: 'queen', J: 'jack' };
   const rankPart = rankMap[card.rank] || String(card.rank);
   return `${rankPart}_of_${card.suit}.png`;
@@ -141,6 +186,7 @@ function renderLayout() {
   const inRoom = Boolean(joinedRoomCode);
   const showLobbyBar = inRoom && (!state || state.phase === 'lobby');
   const showGamePanels = inRoom && state && state.phase !== 'lobby';
+
   landingPanel.classList.toggle('hidden', inRoom);
   roomPanel.classList.toggle('hidden', !showLobbyBar);
   gamePanels.classList.toggle('hidden', !showGamePanels);
@@ -179,7 +225,7 @@ function renderPlayers() {
     const turnTag = p.id === state.turnPlayerId ? ' <- turn' : '';
     const dealerTag = p.id === state.dealerId ? ' (dealer)' : '';
     const openTag = p.opened ? ' [opened]' : '';
-    const hostTag = state.players[0] && state.players[0].id === p.id ? ' (host)' : '';
+    const hostTag = idx === 0 ? ' (host)' : '';
     li.textContent = `${idx + 1}. ${p.name}${hostTag}${dealerTag}${turnTag} | hand: ${p.handCount} | score: ${p.score}${openTag}`;
     playersListEl.appendChild(li);
   });
@@ -341,31 +387,65 @@ function renderRoundInfo() {
   roundInfoEl.textContent = `${contract}. Stage: ${state.turnStage}. ${turnText}.`;
 }
 
+function renderTurnVisuals() {
+  if (!state || !turnBadge || !handPanel) return;
+
+  if (state.phase !== 'inRound') {
+    turnBadge.classList.remove('active', 'yours');
+    handPanel.classList.remove('your-turn');
+    return;
+  }
+
+  const turnPlayer = state.players.find((p) => p.id === state.turnPlayerId);
+  const isMine = state.turnPlayerId === state.yourId;
+  const label = isMine ? 'Your Turn' : `${turnPlayer ? turnPlayer.name : 'Player'}'s Turn`;
+  turnBadge.textContent = label;
+  turnBadge.classList.add('active');
+  turnBadge.classList.toggle('yours', isMine);
+  handPanel.classList.toggle('your-turn', isMine);
+}
+
+function hideRoundOverlay() {
+  if (roundOverlay) roundOverlay.classList.remove('active');
+}
+
 function renderRoundSummary() {
-  if (!state || !state.roundSummary) {
-    roundSummaryPanel.classList.remove('active');
+  if (!state || !state.roundSummary || !roundOverlay) {
+    hideRoundOverlay();
     return;
   }
 
   if (state.phase !== 'roundSummary' && state.phase !== 'finished') {
-    roundSummaryPanel.classList.remove('active');
+    hideRoundOverlay();
     return;
   }
 
   const summary = state.roundSummary;
-  const winner = summary.rows.find((r) => r.id === summary.winnerId);
-  const winnerName = winner ? winner.name : 'Unknown';
+  const roundWinner = summary.rows.find((r) => r.id === summary.winnerId);
+  const roundWinnerName = roundWinner ? roundWinner.name : 'Unknown';
   const bonusText = summary.winnerBonus === -10 ? ' (opened and went out: -10 bonus)' : '';
 
   roundSummaryTitle.textContent = `Round ${summary.round} Summary`;
-  roundSummaryMeta.textContent = `Winner: ${winnerName}${bonusText}`;
+
+  let meta = `Round winner: ${roundWinnerName}${bonusText}`;
+  if (summary.isFinalRound) {
+    const winners = summary.rows
+      .filter((r) => (summary.gameWinnerIds || []).includes(r.id))
+      .map((r) => r.name);
+    if (winners.length > 0) {
+      meta += ` | Game winner: ${winners.join(', ')}`;
+    }
+  }
+  roundSummaryMeta.textContent = meta;
 
   const maxTotal = Math.max(...summary.rows.map((r) => Math.max(0, r.totalScore)), 1);
   const rowsHtml = summary.rows.map((r) => {
     const width = Math.max(0, Math.round((Math.max(0, r.totalScore) / maxTotal) * 100));
+    const isGameWinner = summary.isFinalRound && (summary.gameWinnerIds || []).includes(r.id);
+    const winnerBadge = isGameWinner ? '<span class="winner-badge">Winner</span>' : '';
     return `
-      <tr>
-        <td>${r.name}</td>
+      <tr class="${isGameWinner ? 'winner-row' : ''}">
+        <td>${r.name}${winnerBadge}</td>
         <td>${r.roundScore}</td>
         <td>${r.totalScore}</td>
         <td>
@@ -391,7 +471,48 @@ function renderRoundSummary() {
     </table>
   `;
 
-  roundSummaryPanel.classList.add('active');
+  roundSummaryHands.innerHTML = '';
+  summary.rows.forEach((r) => {
+    const box = document.createElement('div');
+    box.className = 'hand-review';
+
+    const title = document.createElement('div');
+    title.className = 'hand-review-title';
+    title.textContent = `${r.name} | Hand points: ${r.handPoints}`;
+    box.appendChild(title);
+
+    const cardsWrap = document.createElement('div');
+    cardsWrap.className = 'review-cards';
+
+    if (!r.handCards || r.handCards.length === 0) {
+      const none = document.createElement('span');
+      none.className = 'small';
+      none.textContent = 'No cards left';
+      cardsWrap.appendChild(none);
+    } else {
+      r.handCards.forEach((card) => {
+        const img = makeCardImage(card, 'card-face mini');
+        img.addEventListener('error', () => {
+          const fallback = document.createElement('span');
+          fallback.textContent = cardLabel(card);
+          img.replaceWith(fallback);
+        });
+        cardsWrap.appendChild(img);
+      });
+    }
+
+    box.appendChild(cardsWrap);
+    roundSummaryHands.appendChild(box);
+  });
+
+  const isRoundSummary = state.phase === 'roundSummary' && summary.canContinue;
+  continueRoundBtn.classList.toggle('hidden', !isRoundSummary);
+  continueRoundBtn.disabled = !state.isHost;
+
+  const isFinished = state.phase === 'finished';
+  endGameBtn.classList.toggle('hidden', !isFinished);
+
+  roundOverlay.classList.add('active');
 }
 
 function renderPiles() {
@@ -411,6 +532,7 @@ function renderPiles() {
       : ' Claim window open.';
     info += claimers;
   }
+
   pileInfoEl.textContent = info;
   stockCountLabel.textContent = `Stock: ${state.stockCount}`;
   discardCountLabel.textContent = `Discard: ${state.discardCount}`;
@@ -429,11 +551,47 @@ function renderPiles() {
   }
 }
 
+function clearClaimAnnouncement() {
+  if (claimAnnouncementTimer) {
+    clearTimeout(claimAnnouncementTimer);
+    claimAnnouncementTimer = null;
+  }
+  claimAnnouncementClearAfterSerial = null;
+  if (claimAnnouncementEl) {
+    claimAnnouncementEl.classList.remove('active');
+    claimAnnouncementEl.innerHTML = '';
+  }
+}
+
+function showClaimAnnouncement(payload) {
+  if (!claimAnnouncementEl || !payload || !payload.card) return;
+
+  clearClaimAnnouncement();
+  claimAnnouncementClearAfterSerial = Number(payload.clearAfterDiscardSerial);
+
+  claimAnnouncementEl.innerHTML = '';
+  const label = document.createElement('span');
+  label.textContent = `${payload.playerName} took:`;
+  claimAnnouncementEl.appendChild(label);
+
+  const img = makeCardImage(payload.card, 'card-face mini');
+  img.addEventListener('error', () => {
+    const fallback = document.createElement('span');
+    fallback.textContent = cardLabel(payload.card);
+    img.replaceWith(fallback);
+  });
+  claimAnnouncementEl.appendChild(img);
+  claimAnnouncementEl.classList.add('active');
+
+  claimAnnouncementTimer = setTimeout(() => {
+    clearClaimAnnouncement();
+  }, 5000);
+}
+
 function syncControls() {
   pruneSelectionToCurrentHand();
 
   const inLobby = state && state.phase === 'lobby';
-  const inRound = state && state.phase === 'inRound';
   const stageDraw = state && state.turnStage === 'draw';
   const stageDiscard = state && state.turnStage === 'discard';
   const inSummary = state && state.phase === 'roundSummary';
@@ -441,9 +599,9 @@ function syncControls() {
   const playerCount = state && state.players ? state.players.length : 0;
   startGameBtn.textContent = `Start Game (${playerCount}/${state ? state.maxPlayers : 5})`;
   startGameBtn.disabled = !inLobby || !state || !state.isHost || playerCount < 2;
-  continueRoundBtn.disabled = !inSummary || !state || !state.isHost;
 
   stockPileBtn.disabled = !canActOnTurn() || !stageDraw || !state || state.stockCount < 1;
+
   const canDrawDiscard = canActOnTurn() && stageDraw && state && state.discardTop;
   const canClaimDiscard = state
     && state.phase === 'inRound'
@@ -458,7 +616,9 @@ function syncControls() {
   openBtn.disabled = !canActOnTurn() || !stageDiscard || pendingMelds.length === 0 || youOpened();
   layoffBtn.disabled = !canActOnTurn() || !stageDiscard || !youOpened() || selectedCardIds.size < 1 || !meldSelect.value;
 
-  if (!inRound) {
+  if (!inSummary) continueRoundBtn.disabled = true;
+
+  if (!state || state.phase !== 'inRound') {
     selectedCardIds.clear();
     pendingMelds = [];
   }
@@ -468,6 +628,7 @@ function render() {
   renderLayout();
   renderLobbyPlayers();
   renderRoundInfo();
+  renderTurnVisuals();
   renderPiles();
   renderPlayers();
   renderHand();
@@ -475,6 +636,19 @@ function render() {
   renderTableMelds();
   renderRoundSummary();
   syncControls();
+
+  if (
+    state
+    && claimAnnouncementClearAfterSerial !== null
+    && Number.isFinite(state.discardSerial)
+    && state.discardSerial >= claimAnnouncementClearAfterSerial
+  ) {
+    clearClaimAnnouncement();
+  }
+
+  if (!state || state.phase !== 'inRound') {
+    clearClaimAnnouncement();
+  }
 }
 
 createRoomBtn.addEventListener('click', () => {
@@ -483,7 +657,8 @@ createRoomBtn.addEventListener('click', () => {
     landingStatus.textContent = 'Enter your name first.';
     return;
   }
-  socket.emit('createRoom', { name });
+  localStorage.setItem(PLAYER_NAME_STORAGE_KEY, name);
+  socket.emit('createRoom', { name, playerToken });
 });
 
 joinRoomBtn.addEventListener('click', () => {
@@ -497,7 +672,9 @@ joinRoomBtn.addEventListener('click', () => {
     landingStatus.textContent = 'Enter a room code.';
     return;
   }
-  socket.emit('joinRoom', { roomCode: code, name });
+  localStorage.setItem(PLAYER_NAME_STORAGE_KEY, name);
+  localStorage.setItem(LAST_ROOM_STORAGE_KEY, code);
+  socket.emit('joinRoom', { roomCode: code, name, playerToken });
 });
 
 startGameBtn.addEventListener('click', () => {
@@ -508,12 +685,17 @@ continueRoundBtn.addEventListener('click', () => {
   socket.emit('continueRound');
 });
 
+endGameBtn.addEventListener('click', () => {
+  socket.emit('leaveRoom');
+});
+
 stockPileBtn.addEventListener('click', () => {
   socket.emit('drawStock');
 });
 
 discardPileBtn.addEventListener('click', () => {
   if (!state) return;
+
   const canDrawDiscard = canActOnTurn() && state.turnStage === 'draw';
   if (canDrawDiscard) {
     socket.emit('drawDiscard');
@@ -526,7 +708,7 @@ discardPileBtn.addEventListener('click', () => {
     && !state.discardClaimedByMe;
   if (canClaimDiscard) {
     socket.emit('claimDiscard');
-    statusEl.textContent = 'Discard claim registered. Precedence will follow turn order.';
+    statusEl.textContent = 'Discard claim registered. Precedence follows turn order.';
   }
 });
 
@@ -568,18 +750,37 @@ layoffBtn.addEventListener('click', () => {
 });
 
 socket.on('connect', () => {
+  const knownRoomCode = joinedRoomCode || sanitizeCode(localStorage.getItem(LAST_ROOM_STORAGE_KEY) || '');
+  const playerName = nameInput.value.trim();
+  if (knownRoomCode && playerName) {
+    landingStatus.textContent = `Reconnecting to room ${knownRoomCode}...`;
+    socket.emit('joinRoom', { roomCode: knownRoomCode, name: playerName, playerToken });
+    return;
+  }
   landingStatus.textContent = 'Connected. Create or join a room.';
 });
 
 socket.on('roomJoined', ({ roomCode }) => {
   joinedRoomCode = roomCode;
+  localStorage.setItem(LAST_ROOM_STORAGE_KEY, roomCode);
   landingStatus.textContent = `Joined room ${roomCode}.`;
   renderLayout();
 });
 
+socket.on('leftRoom', () => {
+  resetToLanding('Returned to landing page.');
+});
+
+socket.on('discardPickupAnnouncement', (payload) => {
+  showClaimAnnouncement(payload);
+});
+
 socket.on('state', (nextState) => {
   state = nextState;
-  if (state.roomCode) joinedRoomCode = state.roomCode;
+  if (state.roomCode) {
+    joinedRoomCode = state.roomCode;
+    localStorage.setItem(LAST_ROOM_STORAGE_KEY, state.roomCode);
+  }
   render();
 
   if (state.phase === 'lobby') {
@@ -587,18 +788,18 @@ socket.on('state', (nextState) => {
       ? 'Waiting for players. Click Start Game when ready.'
       : 'Waiting for host to start the game.';
   } else if (state.phase === 'finished') {
-    statusEl.textContent = 'Game finished. Create a new room for a new match.';
+    statusEl.textContent = 'Game finished. Review results and click End Game.';
   } else if (state.winnerOfHand) {
     const winner = state.players.find((p) => p.id === state.winnerOfHand);
-    if (winner) {
-      statusEl.textContent = `${winner.name} ended the hand.`;
-    }
+    if (winner) statusEl.textContent = `${winner.name} ended the hand.`;
   }
 });
 
 socket.on('gameError', (message) => {
-  if (!joinedRoomCode) landingStatus.textContent = message;
-  else {
-    statusEl.textContent = message;
+  if (message === 'Room not found.') {
+    localStorage.removeItem(LAST_ROOM_STORAGE_KEY);
+    if (!joinedRoomCode) roomCodeInput.value = '';
   }
+  if (!joinedRoomCode) landingStatus.textContent = message;
+  else statusEl.textContent = message;
 });
