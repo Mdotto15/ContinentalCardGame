@@ -12,6 +12,7 @@
       --warn: #b45309;
       --muted: #d9e2ec;
       --panel: rgba(15, 23, 42, 0.62);
+      --table-bg-url: url('/images/tabletop');
     }
 
     * { box-sizing: border-box; }
@@ -22,7 +23,7 @@
       background:
         radial-gradient(circle at 10% 0%, rgba(255, 255, 255, 0.1), transparent 40%),
         radial-gradient(circle at 90% 100%, rgba(0, 0, 0, 0.2), transparent 35%),
-        url('/images/tabletop') center / cover no-repeat fixed;
+        var(--table-bg-url) center / cover no-repeat fixed;
       color: var(--ink);
       min-height: 100vh;
     }
@@ -38,7 +39,6 @@
     .turn-badge-wrap {
       display: flex;
       justify-content: center;
-      margin-top: 2px;
     }
 
     .turn-badge {
@@ -163,6 +163,12 @@
       gap: 12px;
     }
 
+    .game-top-actions {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 4px;
+    }
+
     .compact-panel {
       padding: 8px 10px;
     }
@@ -172,24 +178,58 @@
       margin-bottom: 4px;
     }
 
-    .table-area {
+    .table-stage {
+      position: relative;
+      min-height: 440px;
+      margin-top: 6px;
       border-radius: 14px;
-      padding: 14px;
       border: 1px solid rgba(255, 255, 255, 0.2);
-      background: rgba(9, 63, 43, 0.4);
+      background: rgba(9, 63, 43, 0.45);
+      overflow: hidden;
+    }
+
+    .table-area {
+      position: absolute;
+      left: 50%;
+      top: 56%;
+      transform: translate(-50%, -50%);
+      width: min(760px, 92%);
+      padding: 22px;
+      min-height: 220px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      z-index: 2;
+    }
+
+    .table-header {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+
+    .table-header h2 {
+      margin: 0;
+      justify-self: start;
+    }
+
+    .table-header .turn-badge-wrap {
+      justify-self: center;
     }
 
     .pile-row {
       display: flex;
       gap: 18px;
       align-items: center;
+      justify-content: center;
       flex-wrap: wrap;
-      margin-top: 8px;
+      margin-top: 4px;
     }
 
     .claim-announcement {
       display: none;
-      margin-left: 8px;
+      margin-left: 14px;
       padding: 8px 10px;
       border-radius: 8px;
       background: rgba(255, 255, 255, 0.12);
@@ -200,6 +240,63 @@
       width: fit-content;
       max-width: 100%;
       align-self: center;
+    }
+
+    .player-hand-fans {
+      position: absolute;
+      inset: 0;
+      z-index: 3;
+      pointer-events: none;
+    }
+
+    .player-fan {
+      position: absolute;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: rgba(255, 255, 255, 0.06);
+      padding: 6px 8px;
+      width: 170px;
+      transform: translate(-50%, -50%);
+      backdrop-filter: blur(1px);
+    }
+
+    .player-fan.turn {
+      border-color: rgba(94, 234, 212, 0.8);
+      box-shadow: 0 0 0 1px rgba(94, 234, 212, 0.4);
+    }
+
+    .player-fan-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.8rem;
+      color: #e6f0ff;
+      margin-bottom: 4px;
+      gap: 8px;
+    }
+
+    .fan-count {
+      color: #cce7ff;
+      font-weight: 700;
+      font-size: 0.76rem;
+      white-space: nowrap;
+    }
+
+    .mini-fan {
+      position: relative;
+      height: 48px;
+    }
+
+    .mini-fan-card {
+      position: absolute;
+      top: 0;
+      width: 30px;
+      height: 42px;
+      border-radius: 4px;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      box-shadow: 0 3px 8px rgba(0, 0, 0, 0.35);
+      background: #244;
+      object-fit: cover;
     }
 
     .claim-announcement.active {
@@ -275,6 +372,14 @@
       opacity: 0.5;
     }
 
+    .hand-card.drop-before .card-face {
+      box-shadow: 0 8px 12px rgba(0, 0, 0, 0.35), -4px 0 0 0 rgba(94, 234, 212, 0.95);
+    }
+
+    .hand-card.drop-after .card-face {
+      box-shadow: 0 8px 12px rgba(0, 0, 0, 0.35), 4px 0 0 0 rgba(94, 234, 212, 0.95);
+    }
+
     .card-face {
       width: 82px;
       height: auto;
@@ -300,6 +405,44 @@
       transform: translateY(-10px);
       border-color: var(--accent);
       box-shadow: 0 10px 18px rgba(0, 0, 0, 0.55), 0 0 0 2px rgba(255, 140, 66, 0.8);
+    }
+
+    .hand-card.layoff-candidate .card-face {
+      box-shadow: 0 10px 18px rgba(0, 0, 0, 0.5), 0 0 0 2px rgba(94, 234, 212, 0.78);
+    }
+
+    .quick-layoff-actions {
+      display: inline-flex;
+      gap: 6px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-left: 8px;
+    }
+
+    .quick-layoff-actions .hint {
+      color: var(--muted);
+      font-size: 0.83rem;
+      font-weight: 600;
+    }
+
+    .quick-layoff-btn {
+      padding: 6px 8px;
+      font-size: 0.82rem;
+    }
+
+    .hand-card.dealing-enter .card-face {
+      animation: dealIn 220ms ease-out;
+    }
+
+    @keyframes dealIn {
+      from {
+        opacity: 0;
+        transform: translateY(-22px) scale(0.92);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
     }
 
     .meld {
@@ -372,8 +515,85 @@
       color: #7dffbf;
     }
 
+    .pending-meld-row {
+      margin-top: 8px;
+      padding: 6px 8px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .pending-meld-status {
+      margin-top: 4px;
+      font-weight: 700;
+    }
+
+    .pending-meld-cards {
+      margin-top: 6px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+
+    .pending-card-btn {
+      position: relative;
+      border: none;
+      background: transparent;
+      padding: 0;
+      line-height: 0;
+      cursor: pointer;
+    }
+
+    .pending-card-remove {
+      position: absolute;
+      top: -6px;
+      right: -6px;
+      width: 16px;
+      height: 16px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.8);
+      background: rgba(185, 28, 28, 0.95);
+      color: #fff;
+      font-size: 11px;
+      line-height: 14px;
+      text-align: center;
+      pointer-events: none;
+      box-shadow: 0 3px 8px rgba(0, 0, 0, 0.4);
+    }
+
+    .pending-meld-actions {
+      margin-top: 6px;
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .pending-meld-actions button {
+      padding: 4px 8px;
+      font-size: 0.8rem;
+    }
+
+    .pending-contract {
+      margin-top: 8px;
+    }
+
+    .pending-ok {
+      color: #9ef0c1;
+    }
+
+    .pending-bad {
+      color: #ffb4b4;
+    }
+
     .hidden {
       display: none !important;
+    }
+
+    .open-melds-panel {
+      position: sticky;
+      bottom: 8px;
+      z-index: 6;
     }
 
     .hand-panel.your-turn {
@@ -437,6 +657,19 @@
       .top-strip {
         grid-template-columns: 1fr;
       }
+
+      .table-stage {
+        min-height: 390px;
+      }
+
+      .table-area {
+        width: min(640px, 96%);
+        min-height: 200px;
+      }
+
+      .player-fan {
+        width: 148px;
+      }
     }
   </style>
 </head>
@@ -459,18 +692,22 @@
     <div id="roomPanel" class="panel hidden">
       <div class="lobby-screen">
         <div class="lobby-title">Room Lobby</div>
-        <div class="lobby-code"><strong>Room:</strong> <span id="roomCodeLabel">-</span></div>
+        <div class="lobby-code">
+          <strong>Room:</strong> <span id="roomCodeLabel">-</span>
+          <button id="copyRoomCodeBtn" class="secondary" type="button" style="margin-left: 8px; padding: 4px 8px; font-size: 0.85rem;">Copy</button>
+        </div>
         <ul id="lobbyPlayersList" class="lobby-players"></ul>
         <div class="row" style="justify-content: center; margin-top: 12px;">
           <button id="startGameBtn">Start Game (0/5)</button>
+          <button id="leaveLobbyBtn" class="warn">Leave Room</button>
         </div>
       </div>
       <p id="status">Waiting in lobby...</p>
     </div>
 
     <div id="gamePanels" class="hidden">
-      <div class="turn-badge-wrap">
-        <div id="turnBadge" class="turn-badge">Turn</div>
+      <div class="game-top-actions">
+        <button id="bgToggleBtn" class="secondary" type="button" title="Toggle background image">BG</button>
       </div>
 
       <div class="top-strip">
@@ -485,7 +722,7 @@
         </div>
       </div>
 
-      <div class="panel">
+      <div id="tableMeldsPanel" class="panel">
         <h2>Table Melds</h2>
         <div class="felt-panel">
           <div id="tableMelds" class="small">No melds on table yet.</div>
@@ -493,55 +730,63 @@
       </div>
 
       <div class="panel">
-        <h2>Table</h2>
+        <div class="table-header">
+          <h2>Table</h2>
+          <div class="turn-badge-wrap">
+            <div id="turnBadge" class="turn-badge">Turn</div>
+          </div>
+          <div></div>
+        </div>
         <div id="pileInfo" class="small">No active hand.</div>
-        <div class="table-area">
-          <div class="pile-row">
-            <button id="stockPileBtn" class="pile" title="Draw from stock pile">
-              <div class="pile-card-wrap">
-                <img id="stockPileImg" class="back-card" src="/images/card_back.png" alt="Face-down stock pile" />
-              </div>
-              <div id="stockCountLabel" class="pile-label">Stock: 0</div>
-            </button>
+        <div class="table-stage">
+          <div id="playerHandFans" class="player-hand-fans"></div>
+          <div class="table-area">
+            <div class="pile-row">
+              <button id="stockPileBtn" class="pile" title="Draw from stock pile">
+                <div class="pile-card-wrap">
+                  <img id="stockPileImg" class="back-card" src="/images/card_back.png" alt="Face-down stock pile" />
+                </div>
+                <div id="stockCountLabel" class="pile-label">Stock: 0</div>
+              </button>
 
-            <button id="discardPileBtn" class="pile" title="Draw from discard pile">
-              <div id="discardPileCard" class="pile-card-wrap">
-                <div class="pile-empty">Empty</div>
-              </div>
-              <div id="discardCountLabel" class="pile-label">Discard: 0</div>
-            </button>
-            <div id="claimAnnouncement" class="claim-announcement"></div>
+              <button id="discardPileBtn" class="pile" title="Draw from discard pile">
+                <div id="discardPileCard" class="pile-card-wrap">
+                  <div class="pile-empty">Empty</div>
+                </div>
+                <div id="discardCountLabel" class="pile-label">Discard: 0</div>
+              </button>
+              <div id="claimAnnouncement" class="claim-announcement"></div>
+            </div>
           </div>
         </div>
       </div>
 
       <div id="handPanel" class="panel hand-panel">
         <h2>Your Hand</h2>
-        <div class="row">
-          <button id="discardBtn" class="warn">Discard Selected</button>
+        <div class="row" style="justify-content: space-between; align-items: center;">
+          <div class="row" style="gap: 6px;">
+            <button id="discardBtn" class="warn">Discard Selected</button>
+            <div id="quickLayoffActions" class="quick-layoff-actions hidden"></div>
+          </div>
+          <div class="row" style="gap: 6px;">
+            <button id="sortSuitBtn" class="secondary" type="button">Sort Suit</button>
+            <button id="sortNumberBtn" class="secondary" type="button">Sort Number</button>
+          </div>
         </div>
         <p class="small">Click cards to select. Drag cards to reorder your hand.</p>
         <div id="handCards" class="cards"></div>
       </div>
 
       <div class="grid">
-        <div class="panel">
+        <div id="openMeldsPanel" class="panel open-melds-panel">
           <h2>Open Melds</h2>
           <div class="row">
             <button id="addPendingMeldBtn">Add Pending Meld From Selected</button>
+            <button id="suggestOpenBtn" class="secondary">Auto Add Best Open</button>
             <button id="clearPendingBtn" class="secondary">Clear Pending</button>
             <button id="openBtn">Open</button>
           </div>
           <div id="pendingMelds" class="small"></div>
-        </div>
-
-        <div class="panel">
-          <h2>Lay Off</h2>
-          <div class="row">
-            <select id="meldSelect"></select>
-            <button id="layoffBtn" class="secondary">Lay Off Selected</button>
-          </div>
-          <p class="small">You must already be opened this round.</p>
         </div>
       </div>
 
